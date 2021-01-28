@@ -27,29 +27,28 @@ function updateMemoryWithMoves()
     memoryList = memoryListBackup
     --get the first transposed object's coordinates
     local obj = getObjectFromGUID(moveGuid)
-
-    -- p1 is where needs to go, p2 is where it was
-    local refObjPos = memoryList[moveGuid].pos
-    local deltaPos = findOffsetDistance(obj.getPosition(), refObjPos, nil)
-    local movedRotation = obj.getRotation()
+    local objPos = obj.getPosition()
+    local refObjPos = duplicateTable(memoryList[moveGuid].pos)
+    local refObjRot = duplicateTable(memoryList[moveGuid].rot)
+    local deltaRot = obj.getRotation() - refObjRot
     for guid, entry in pairs(memoryList) do
-        memoryList[guid].pos.x = entry.pos.x - deltaPos.x
-        memoryList[guid].pos.y = entry.pos.y - deltaPos.y
-        memoryList[guid].pos.z = entry.pos.z - deltaPos.z
-        -- memoryList[guid].rot.x = movedRotation.x
-        -- memoryList[guid].rot.y = movedRotation.y
-        -- memoryList[guid].rot.z = movedRotation.z
+        --find the displacement vector from obj's old position
+        local entryDist = findOffsetDistance(refObjPos, entry.pos, nil)
+        --pivot the vector based on obj's rotation
+        local pivotPos = cartesianPivot(entryDist, deltaRot)
+        --apply the vector to obj's new position
+        memoryList[guid].pos.x = objPos.x + pivotPos.x
+        memoryList[guid].pos.y = objPos.y + pivotPos.y
+        memoryList[guid].pos.z = objPos.z + pivotPos.z
+        --rotate entry
+        memoryList[guid].rot.x = memoryList[guid].rot.x + deltaRot.x
+        memoryList[guid].rot.y = memoryList[guid].rot.y + deltaRot.y
+        memoryList[guid].rot.z = memoryList[guid].rot.z + deltaRot.z
     end
-
-    --theList[obj.getGUID()] = {
-    --    pos={x=round(pos.x,4), y=round(pos.y,4), z=round(pos.z,4)},
-    --    rot={x=round(rot.x,4), y=round(rot.y,4), z=round(rot.z,4)},
-    --    lock=obj.getLock()
-    --}
     moveList = {}
 end
 
-function onload(saved_data)
+function onLoad(saved_data)
     fresh = true
     if saved_data ~= "" then
         local loaded_data = JSON.decode(saved_data)
@@ -250,7 +249,8 @@ function buttonClick_selection(obj, move)
         theList[obj.getGUID()] = {
             pos={x=round(pos.x,4), y=round(pos.y,4), z=round(pos.z,4)},
             rot={x=round(rot.x,4), y=round(rot.y,4), z=round(rot.z,4)},
-            lock=obj.getLock()
+            lock=obj.getLock(),
+            tint=obj.getColorTint()
         }
         obj.highlightOn({0,1,0})
     else
@@ -278,7 +278,8 @@ function editDragSelection(bagObj, player, remove)
                 memoryList[obj.getGUID()] = {
                     pos={x=round(pos.x,4), y=round(pos.y,4), z=round(pos.z,4)},
                     rot={x=round(rot.x,4), y=round(rot.y,4), z=round(rot.z,4)},
-                    lock=obj.getLock()
+                    lock=obj.getLock(),
+                    tint=obj.getColorTint()
                 }
                 obj.highlightOn({0,1,0})
             end
@@ -402,6 +403,7 @@ function buttonClick_setNew()
             memoryListBackup[guid].pos = obj.getPosition()
             memoryListBackup[guid].rot = obj.getRotation()
             memoryListBackup[guid].lock = obj.getLock()
+            memoryListBackup[guid].tint = obj.getColorTint()
         end
     end
     broadcastToAll(count.." Objects Saved", {1,1,1})
@@ -458,6 +460,7 @@ function buttonClick_place()
             obj.setPositionSmooth(entry.pos)
             obj.setRotationSmooth(entry.rot)
             obj.setLock(entry.lock)
+            obj.setColorTint(entry.tint)
         else
             --If obj is inside of the bag
             for _, bagObj in ipairs(bagObjList) do
@@ -466,6 +469,7 @@ function buttonClick_place()
                         guid=guid, position=entry.pos, rotation=entry.rot, smooth=false
                     })
                     item.setLock(entry.lock)
+                    item.setColorTint(entry.tint)
                     break
                 end
             end
@@ -494,10 +498,11 @@ function findOffsetDistance(p1, p2, obj)
         local bounds = obj.getBounds()
         yOffset = (bounds.size.y - bounds.offset.y)
     end
-    local deltaPos = {}
-    deltaPos.x = (p2.x-p1.x)
-    deltaPos.y = (p2.y-p1.y) + yOffset
-    deltaPos.z = (p2.z-p1.z)
+    local deltaPos = Vector(
+        p2.x-p1.x,
+        (p2.y-p1.y) + yOffset,
+        p2.z-p1.z
+    )
     return deltaPos
 end
 
@@ -516,6 +521,34 @@ function rotateMyCoordinates(desiredPos, obj)
     local x = desiredPos.x * math.sin(angle)
     local z = desiredPos.z * math.cos(angle)
     return {x=x, y=desiredPos.y, z=z}
+end
+
+--Used to pivot a position vector about a rotation vector
+function cartesianPivot(pos, rot)
+    local r = {
+        x=math.rad(rot.x),
+        y=math.rad(rot.y),
+        z=math.rad(rot.z)
+    }
+    --x rotation
+    local newPos = {
+        x=pos.x,
+        y=pos.y * math.cos(r.x) - pos.z * math.sin(r.x),
+        z=pos.y * math.sin(r.x) + pos.z * math.cos(r.x)
+    }
+    --y rotation
+    newPos = {
+        x=newPos.x * math.cos(r.y) + newPos.z * math.sin(r.y),
+        y=newPos.y,
+        z=newPos.z * math.cos(r.y) - newPos.x * math.sin(r.y)
+    }
+    --z rotation
+    newPos = {
+        x=newPos.x * math.cos(r.z) - newPos.y * math.sin(r.z),
+        y=newPos.x * math.sin(r.z) + newPos.y * math.cos(r.z),
+        z=newPos.z
+    }
+    return newPos
 end
 
 --Coroutine delay, in seconds
